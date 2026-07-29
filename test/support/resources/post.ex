@@ -442,6 +442,15 @@ defmodule AshPostgres.Test.Post do
       upsert_fields([:price])
     end
 
+    # Declares the upsert on the action itself, over a composite identity with no `where`.
+    # Deliberately has no changes and no notifiers, which keeps its `action_select` down to
+    # just the primary key.
+    create :upsert_on_composite_identity do
+      upsert?(true)
+      upsert_identity(:uniq_one_and_two)
+      upsert_fields([:price])
+    end
+
     create :create_with_nested_bulk_create do
       change(
         after_action(fn changeset, result, context ->

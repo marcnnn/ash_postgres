@@ -323,6 +323,56 @@ defmodule AshPostgres.BulkCreateTest do
                end)
     end
 
+    # Mirrors the shape reported from a real application: the create action declares the
+    # upsert semantics itself (rather than the caller passing `upsert?`/`upsert_identity`),
+    # over a composite identity with no `where`, driven through a select that doesn't
+    # include the identity keys.
+    #
+    # `:upsert_on_composite_identity` declares no changes and no notifiers, so its
+    # `action_select` is just the primary key - an explicit `select` therefore can't widen it
+    # to include `:uniq_one` and `:uniq_two`. `select: []` is what `Ash.Reactor`'s
+    # `bulk_create` step passes by default, which is how this is reached without anyone
+    # writing a select at all.
+    #
+    # The rows are written correctly either way; what breaks is pairing them back up with
+    # their changesets, so the caller gets `status: :success` with no records and no errors.
+    test "bulk upsert over a composite identity returns records when select excludes the keys" do
+      assert %Ash.BulkResult{status: :success, records: inserted} =
+               Ash.bulk_create(
+                 [
+                   %{title: "fred", uniq_one: "one", uniq_two: "two", price: 10},
+                   %{title: "george", uniq_one: "three", uniq_two: "four", price: 20}
+                 ],
+                 Post,
+                 :upsert_on_composite_identity,
+                 return_records?: true,
+                 return_errors?: true,
+                 select: []
+               )
+
+      assert length(inserted) == 2
+      assert Enum.all?(inserted, & &1.id)
+      assert [10, 20] == Post |> Ash.read!() |> Enum.map(& &1.price) |> Enum.sort()
+
+      # The same call again: every row now conflicts, so this exercises the update branch.
+      assert %Ash.BulkResult{status: :success, records: upserted} =
+               Ash.bulk_create(
+                 [
+                   %{title: "fred", uniq_one: "one", uniq_two: "two", price: 1000},
+                   %{title: "george", uniq_one: "three", uniq_two: "four", price: 20_000}
+                 ],
+                 Post,
+                 :upsert_on_composite_identity,
+                 return_records?: true,
+                 return_errors?: true,
+                 select: []
+               )
+
+      assert length(upserted) == 2
+      assert Enum.all?(upserted, & &1.id)
+      assert [1000, 20_000] == Post |> Ash.read!() |> Enum.map(& &1.price) |> Enum.sort()
+    end
+
     test "bulk upsert returns skipped records with return_skipped_upsert?" do
       assert [
                {:ok, %{title: "fredfoo", uniq_if_contains_foo: "1foo", price: 10}},
